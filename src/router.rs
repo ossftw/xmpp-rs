@@ -29,37 +29,44 @@ impl Router {
     }
 
     pub async fn route(&self, _from: &str, to: &str, stanza: &str) -> Result<bool, String> {
-        let clients = self.clients.read().await;
+        let sender = {
+            let clients = self.clients.read().await;
 
-        if let Some(sender) = clients.get(to) {
-            return sender.send(stanza.to_string()).map(|_| true).map_err(|e| e.to_string());
-        }
+            if let Some(sender) = clients.get(to) {
+                Some(sender.clone())
+            } else {
+                let best = clients.keys()
+                    .filter(|jid| {
+                        let to_bare = to.split('/').next().unwrap_or(to);
+                        let jid_bare = jid.split('/').next().unwrap_or(jid);
+                        jid_bare == to_bare
+                    })
+                    .next()
+                    .and_then(|jid| clients.get(jid));
 
-        let matching: Vec<&String> = clients.keys()
-            .filter(|jid| jid.starts_with(&format!("{}", to)) || {
-                let to_bare = to.split('/').next().unwrap_or(to);
-                let jid_bare = jid.split('/').next().unwrap_or(jid);
-                jid_bare == to_bare
-            })
-            .collect();
-
-        if let Some(best) = matching.first() {
-            if let Some(sender) = clients.get(*best) {
-                return sender.send(stanza.to_string()).map(|_| true).map_err(|e| e.to_string());
+                best.cloned()
             }
-        }
+        };
 
-        Err(format!("No route found for JID: {}", to))
+        match sender {
+            Some(s) => s.send(stanza.to_string()).map(|_| true).map_err(|e| e.to_string()),
+            None => Err(format!("No route found for JID: {}", to)),
+        }
     }
 
     pub async fn broadcast(&self, stanza: &str, exclude: Option<&str>) -> usize {
-        let clients = self.clients.read().await;
+        let targets = {
+            let clients = self.clients.read().await;
+            clients.iter()
+                .filter(|(jid, _)| Some(jid.as_str()) != exclude)
+                .map(|(jid, sender)| (jid.clone(), sender.clone()))
+                .collect::<Vec<_>>()
+        };
+
         let mut count = 0;
-        for (jid, sender) in clients.iter() {
-            if Some(jid.as_str()) != exclude {
-                if sender.send(stanza.to_string()).is_ok() {
-                    count += 1;
-                }
+        for (_, sender) in targets {
+            if sender.send(stanza.to_string()).is_ok() {
+                count += 1;
             }
         }
         count

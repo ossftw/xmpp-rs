@@ -2,6 +2,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 use tokio_rustls::TlsAcceptor;
 
 use crate::auth::AuthManager;
@@ -10,6 +11,38 @@ use crate::muc::MucManager;
 use crate::roster::RosterManager;
 use crate::router::Router;
 use crate::stanza;
+
+struct RateLimiter {
+    tokens: f64,
+    last_refill: Instant,
+    rate: f64,
+    burst: f64,
+}
+
+impl RateLimiter {
+    fn new(rate: f64, burst: f64) -> Self {
+        Self {
+            tokens: burst,
+            last_refill: Instant::now(),
+            rate,
+            burst,
+        }
+    }
+
+    fn check(&mut self) -> bool {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        self.tokens = (self.tokens + elapsed * self.rate).min(self.burst);
+        self.last_refill = now;
+
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct C2sHandler {
@@ -173,6 +206,11 @@ async fn handle_c2s(
 
     let mut writer = writer_half;
 
+    let mut rate_limiter = RateLimiter::new(
+        config.rate_limit.stanzas_per_second as f64,
+        config.rate_limit.burst_size as f64,
+    );
+
     let write_handle = tokio::spawn(async move {
         while let Some(stanza) = stanza_rx.recv().await {
             let to_send = format!("{}\n", stanza);
@@ -195,6 +233,11 @@ async fn handle_c2s(
                 let trimmed = buf.trim();
                 if trimmed.is_empty() {
                     continue;
+                }
+
+                if !rate_limiter.check() {
+                    log::warn!("Rate limit exceeded, disconnecting client");
+                    break;
                 }
 
                 match stanza::parse_stream_element(trimmed) {

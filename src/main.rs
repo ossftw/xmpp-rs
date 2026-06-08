@@ -29,7 +29,7 @@ async fn main() -> anyhow::Result<()> {
     if args.len() >= 3 && args[1] == "register" {
         let username = &args[2];
         let password = if args.len() >= 4 { &args[3] } else { "changeme123" };
-        let users_path = config.storage.users_file.to_str().unwrap_or("/tmp/xmpp-data/users.json");
+        let users_path = config.storage.users_file.to_str().unwrap_or("/data/users.json");
         let auth = auth::AuthManager::new();
         auth.load_users(users_path).await?;
         if auth.user_exists(username).await {

@@ -154,13 +154,13 @@ impl AuthManager {
 
         let auth_msg = format!("{},{}", server_first, client_final_without_proof);
 
-        let client_key = hex::decode(&stored_key).map_err(|_| "invalid-key")?;
+        let stored_key_bytes = hex::decode(&stored_key).map_err(|_| "invalid-key")?;
 
-        let _client_signature = hmac_sha1(&client_key, auth_msg.as_bytes());
-        let client_proof_bytes = hex_decode(expected_proof).map_err(|_| "invalid-proof-encoding")?;
-        let stored_client_key = xor_bytes(&client_key, &client_proof_bytes);
+        let client_signature = hmac_sha1(&stored_key_bytes, auth_msg.as_bytes());
+        let client_proof_bytes = general_purpose::STANDARD.decode(expected_proof).map_err(|_| "invalid-proof-encoding")?;
+        let client_key = xor_bytes(&client_proof_bytes, &client_signature);
 
-        if hex::encode(sha1_raw(&stored_client_key)) != stored_key.replace('-', "") {
+        if hex::encode(sha1_raw(&client_key)) != stored_key {
             return Err("not-authorized".to_string());
         }
 
@@ -272,7 +272,4 @@ fn xor_bytes(a: &[u8], b: &[u8]) -> Vec<u8> {
     a.iter().zip(b.iter()).map(|(x, y)| x ^ y).collect()
 }
 
-fn hex_decode(s: &str) -> Result<Vec<u8>, ()> {
-    let decoded = general_purpose::STANDARD.decode(s).map_err(|_| ())?;
-    Ok(decoded)
-}
+
