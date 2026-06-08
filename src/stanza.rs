@@ -292,33 +292,35 @@ fn parse_stanza_from_events(xml: &str, kind: StanzaKind, root: &BytesStart) -> (
     }
 
     let mut buf = Vec::<u8>::new();
-    let mut depth = 1;
+    let mut depth = 0u32;
 
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
                 depth += 1;
-                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                let mut attrs = HashMap::new();
-                let mut element_xmlns = None;
-                for attr in e.attributes().flatten() {
-                    let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
-                    let val = String::from_utf8_lossy(&attr.value).to_string();
-                    if key == "xmlns" {
-                        element_xmlns = Some(val.clone());
+                if depth > 1 {
+                    let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    let mut attrs = HashMap::new();
+                    let mut element_xmlns = None;
+                    for attr in e.attributes().flatten() {
+                        let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                        let val = String::from_utf8_lossy(&attr.value).to_string();
+                        if key == "xmlns" {
+                            element_xmlns = Some(val.clone());
+                        }
+                        attrs.insert(key, val);
                     }
-                    attrs.insert(key, val);
+
+                    let child = StanzaChild::Element {
+                        name,
+                        attrs,
+                        children: Vec::new(),
+                        text: None,
+                        xmlns: element_xmlns,
+                    };
+
+                    stanza.children.push(child);
                 }
-
-                let child = StanzaChild::Element {
-                    name,
-                    attrs,
-                    children: Vec::new(),
-                    text: None,
-                    xmlns: element_xmlns,
-                };
-
-                stanza.children.push(child);
             }
             Ok(Event::Empty(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
@@ -333,15 +335,13 @@ fn parse_stanza_from_events(xml: &str, kind: StanzaKind, root: &BytesStart) -> (
                     attrs.insert(key, val);
                 }
 
-                let child = StanzaChild::Element {
+                stanza.children.push(StanzaChild::Element {
                     name,
                     attrs,
                     children: Vec::new(),
                     text: None,
                     xmlns: element_xmlns,
-                };
-
-                stanza.children.push(child);
+                });
             }
             Ok(Event::Text(e)) => {
                 let text = e.unescape().unwrap_or_default().to_string();
@@ -350,6 +350,9 @@ fn parse_stanza_from_events(xml: &str, kind: StanzaKind, root: &BytesStart) -> (
                 }
             }
             Ok(Event::End(_)) => {
+                if depth == 0 {
+                    break;
+                }
                 depth -= 1;
                 if depth == 0 {
                     break;
