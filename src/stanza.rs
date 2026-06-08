@@ -147,9 +147,6 @@ impl Stanza {
         xml
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
-        self.to_xml_string().into_bytes()
-    }
 }
 
 fn child_to_xml(child: &StanzaChild) -> String {
@@ -196,7 +193,7 @@ fn escape_xml(s: &str) -> String {
 
 pub enum ParseResult {
     Stanza(Stanza),
-    StreamOpen { xmlns: String, to: Option<String>, from: Option<String>, id: Option<String>, version: Option<String> },
+    StreamOpen { to: Option<String>, from: Option<String> },
     StreamClose,
     Error(String),
     Incomplete,
@@ -215,33 +212,22 @@ pub fn parse_stream_element(xml: &str) -> ParseResult {
     if trimmed.starts_with("<stream:stream") || trimmed.starts_with("<stream ") || trimmed.starts_with("<?xml") {
         if trimmed.contains("<stream:stream") || trimmed.contains("<stream ") {
             let mut reader = Reader::from_str(trimmed);
-            let mut xmlns = String::new();
             let mut to = None;
             let mut from = None;
-            let mut id = None;
-            let mut version = None;
 
             if let Ok(Event::Start(e)) = reader.read_event_into(&mut Vec::new()) {
                 for attr in e.attributes().flatten() {
                     let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
                     let val = String::from_utf8_lossy(&attr.value).to_string();
-                    if key == "xmlns" {
-                        xmlns = val;
-                    } else if key == "to" {
+                    if key == "to" {
                         to = Some(val);
                     } else if key == "from" {
                         from = Some(val);
-                    } else if key == "id" {
-                        id = Some(val);
-                    } else if key == "version" || key == "xmlns:stream" {
-                        if key == "version" {
-                            version = Some(val);
-                        }
                     }
                 }
             }
 
-            return ParseResult::StreamOpen { xmlns, to, from, id, version };
+            return ParseResult::StreamOpen { to, from };
         }
         return ParseResult::Incomplete;
     }
@@ -369,15 +355,22 @@ fn parse_stanza_from_events(xml: &str, kind: StanzaKind, root: &BytesStart) -> (
     (stanza, 0)
 }
 
-pub fn build_stream_open(domain: &str, xmlns: &str, id: &str) -> String {
-    format!(
-        "<?xml version='1.0'?><stream:stream xmlns='{}' xmlns:stream='http://etherx.jabber.org/streams' id='{}' from='{}' version='1.0' xml:lang='en'>",
-        xmlns, id, domain
-    )
+pub fn build_starttls_proceed() -> String {
+    "<proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>".to_string()
 }
 
-pub fn build_stream_close() -> String {
-    "</stream:stream>".to_string()
+pub fn build_features_with_starttls() -> String {
+    r#"<stream:features>
+  <starttls xmlns="urn:ietf:params:xml:ns:xmpp-tls">
+    <required/>
+  </starttls>
+  <mechanisms xmlns="urn:ietf:params:xml:ns:xmpp-sasl">
+    <mechanism>PLAIN</mechanism>
+    <mechanism>SCRAM-SHA-1</mechanism>
+  </mechanisms>
+  <c xmlns="http://jabber.org/protocol/caps" node="http://ossftw.com/xmpp/server" ver="1.0" hash="sha-1"/>
+  <register xmlns="http://jabber.org/features/iq-register"/>
+</stream:features>"#.to_string()
 }
 
 pub fn build_features_post_auth() -> String {
@@ -437,15 +430,6 @@ pub fn build_session_result(sid: &str) -> String {
     )
 }
 
-pub fn build_iq_result(id: &str, xmlns: &str, child_xml: &str) -> String {
-    format!(
-        r#"<iq id="{id}" type="result" xmlns="{xmlns}">{child_xml}</iq>"#,
-        id = id,
-        xmlns = xmlns,
-        child_xml = child_xml
-    )
-}
-
 pub fn build_iq_error(id: &str, condition: &str, text: &str) -> String {
     format!(
         r#"<iq id="{id}" type="error"><error type='cancel'><{condition} xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/><text xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'>{text}</text></error></iq>"#,
@@ -481,9 +465,4 @@ pub fn build_presence(from: &str, to: &str, ptype: Option<&str>, show: Option<&s
     xml
 }
 
-pub fn extract_stanza_name(xml: &str) -> Option<String> {
-    let trimmed = xml.trim();
-    let rest = if trimmed.starts_with('<') { &trimmed[1..] } else { return None };
-    let end = rest.find(|c: char| c.is_whitespace() || c == '>' || c == '/')?;
-    Some(rest[..end].to_string())
-}
+

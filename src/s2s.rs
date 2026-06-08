@@ -70,7 +70,7 @@ async fn handle_s2s_connection(
                 }
 
                 match stanza::parse_stream_element(trimmed) {
-                    stanza::ParseResult::StreamOpen { xmlns: _, to, from, id: _, version: _ } => {
+                    stanza::ParseResult::StreamOpen { to, from } => {
                         if let Some(ref from_domain) = from {
                             remote_domain = from_domain.clone();
                         }

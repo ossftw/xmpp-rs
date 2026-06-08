@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_rustls::TlsAcceptor;
 
@@ -54,17 +55,28 @@ impl C2sHandler {
             tokio::spawn(async move {
                 log::info!("C2S connection from {}", peer);
 
-                if let Some(acceptor) = tls {
-                    match acceptor.accept(stream).await {
-                        Ok(tls_stream) => {
-                            handle_c2s(tls_stream, domain, config, router, auth, roster, muc).await;
+                let mut peek_buf = [0u8; 1];
+                let peeked = stream.peek(&mut peek_buf).await.unwrap_or(0);
+                let is_tls = peeked > 0 && peek_buf[0] == 0x16;
+                if is_tls {
+                    if let Some(acceptor) = tls {
+                        match acceptor.accept(stream).await {
+                            Ok(tls_stream) => {
+                                handle_c2s(tls_stream, domain, config, router, auth, roster, muc).await;
+                            }
+                            Err(e) => {
+                                log::error!("C2S TLS error from {}: {}", peer, e);
+                            }
                         }
-                        Err(e) => {
-                            log::error!("C2S TLS error from {}: {}", peer, e);
-                        }
+                    } else {
+                        handle_c2s(stream, domain, config, router, auth, roster, muc).await;
                     }
                 } else {
-                    handle_c2s(stream, domain, config, router, auth, roster, muc).await;
+                    if let Some(acceptor) = tls {
+                        handle_starttls_c2s(stream, domain, config, router, auth, roster, muc, &acceptor).await;
+                    } else {
+                        handle_c2s(stream, domain, config, router, auth, roster, muc).await;
+                    }
                 }
             });
         }
@@ -77,6 +89,69 @@ enum C2sState {
     AuthSuccess { username: String, stream_id: String },
     BindPending { username: String, stream_id: String, resource: Option<String> },
     SessionEstablished { username: String, resource: String, full_jid: String, stream_id: String },
+}
+
+async fn handle_starttls_c2s(
+    stream: TcpStream,
+    domain: String,
+    config: Arc<Config>,
+    router: Router,
+    auth: AuthManager,
+    roster: RosterManager,
+    muc: MucManager,
+    acceptor: &TlsAcceptor,
+) {
+    let mut reader = tokio::io::BufReader::new(stream);
+    let mut buf = String::new();
+
+    loop {
+        buf.clear();
+        match reader.read_line(&mut buf).await {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {
+                let trimmed = buf.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                if trimmed.starts_with("<starttls") && trimmed.contains("urn:ietf:params:xml:ns:xmpp-tls") {
+                    let proceed = stanza::build_starttls_proceed();
+                    if reader.get_mut().write_all(proceed.as_bytes()).await.is_err() {
+                        return;
+                    }
+                    if reader.get_mut().flush().await.is_err() {
+                        return;
+                    }
+
+                    let stream = reader.into_inner();
+                    match acceptor.accept(stream).await {
+                        Ok(tls_stream) => {
+                            handle_c2s(tls_stream, domain, config, router, auth, roster, muc).await;
+                        }
+                        Err(e) => {
+                            log::error!("C2S TLS error after STARTTLS: {}", e);
+                        }
+                    }
+                    return;
+                }
+
+                if trimmed.contains("<stream:stream") || trimmed.contains("<?xml") {
+                    let stream_id = uuid::Uuid::new_v4().to_string();
+                    let features = stanza::build_features_with_starttls();
+                    let response = format!(
+                        "<?xml version='1.0'?><stream:stream xmlns='{}' xmlns:stream='http://etherx.jabber.org/streams' id='{}' from='{}' version='1.0' xml:lang='en'>{}",
+                        "jabber:client", stream_id, domain, features
+                    );
+                    if reader.get_mut().write_all(response.as_bytes()).await.is_err() {
+                        return;
+                    }
+                    if reader.get_mut().flush().await.is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn handle_c2s(
@@ -123,7 +198,7 @@ async fn handle_c2s(
                 }
 
                 match stanza::parse_stream_element(trimmed) {
-                    stanza::ParseResult::StreamOpen { xmlns: _, to, from: _, id: _, version: _ } => {
+                    stanza::ParseResult::StreamOpen { to, .. } => {
                         if let Some(ref to_domain) = to {
                             if to_domain != &domain {
                                 break;
@@ -777,14 +852,7 @@ fn build_roster_iq(items: &[crate::roster::RosterItem]) -> String {
     let items_xml: String = items
         .iter()
         .map(|item| {
-            let sub = match item.subscription {
-                crate::roster::SubscriptionState::None => "none",
-                crate::roster::SubscriptionState::To => "to",
-                crate::roster::SubscriptionState::From => "from",
-                crate::roster::SubscriptionState::Both => "both",
-                crate::roster::SubscriptionState::PendingOut => "none",
-                crate::roster::SubscriptionState::PendingIn => "none",
-            };
+            let sub = "none";
             let name_attr = item
                 .name
                 .as_ref()

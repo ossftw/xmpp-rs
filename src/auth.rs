@@ -9,36 +9,9 @@ use tokio::sync::RwLock;
 
 type HmacSha1 = Hmac<sha1::Sha1>;
 
-#[derive(Debug, Clone)]
-pub struct User {
-    pub username: String,
-    pub password_hash: String,
-    pub salt: String,
-    pub iterations: u32,
-}
-
-#[derive(Debug, Clone)]
-pub struct ScramCredentials {
-    pub salt: String,
-    pub iterations: u32,
-    pub stored_key: String,
-    pub server_key: String,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum AuthMechanism {
-    Plain,
-    ScramSha1,
-}
-
 #[derive(Debug)]
 pub struct AuthState {
-    pub mechanism: AuthMechanism,
     pub username: Option<String>,
-    pub step: u32,
-    pub client_nonce: Option<String>,
-    pub server_nonce: Option<String>,
-    pub auth_message: Option<String>,
     pub server_first_msg: Option<String>,
 }
 
@@ -137,12 +110,7 @@ impl AuthManager {
         );
 
         let state = AuthState {
-            mechanism: AuthMechanism::ScramSha1,
             username: Some(username.clone()),
-            step: 1,
-            client_nonce: Some(client_nonce),
-            server_nonce: Some(server_nonce),
-            auth_message: None,
             server_first_msg: Some(server_first.clone()),
         };
 
@@ -162,7 +130,6 @@ impl AuthManager {
 
         let username = state.username.as_ref().ok_or("not-authorized")?.clone();
         let server_first = state.server_first_msg.as_ref().ok_or("not-authorized")?.clone();
-        let _client_nonce = state.client_nonce.as_ref().ok_or("not-authorized")?.clone();
 
         let _gs2_header = "n,,";
         let _channel_binding = client_final.split(',').find(|s| s.starts_with("c=")).unwrap_or("");
@@ -222,11 +189,6 @@ impl AuthManager {
         users.contains_key(username)
     }
 
-    pub async fn get_user(&self, username: &str) -> Option<UserData> {
-        let users = self.users.read().await;
-        users.get(username).cloned()
-    }
-
     pub async fn save_users(&self, path: &str) -> anyhow::Result<()> {
         let users = self.users.read().await;
         let users_vec: Vec<&UserData> = users.values().collect();
@@ -252,10 +214,6 @@ impl AuthManager {
         let users = self.users.read().await;
         users.keys().cloned().collect()
     }
-}
-
-fn client_first_part(client_nonce: &str) -> String {
-    format!("n,,n=,r={}", client_nonce)
 }
 
 fn generate_salt() -> String {

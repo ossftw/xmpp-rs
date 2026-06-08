@@ -65,13 +65,4 @@ impl Router {
         count
     }
 
-    pub async fn online_count(&self) -> usize {
-        let clients = self.clients.read().await;
-        clients.len()
-    }
-
-    pub async fn connected_users(&self) -> Vec<String> {
-        let clients = self.clients.read().await;
-        clients.keys().cloned().collect()
-    }
 }
