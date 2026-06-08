@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  xmpp:
+    build: .
+    container_name: xmpp-ossftw
+    restart: unless-stopped
+    ports:
+      - "5222:5222"
+      - "5269:5269"
+    volumes:
+      - ./config.toml:/config.toml:ro
+      - xmpp-data:/data
+      - xmpp-certs:/certs
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+      - DOMAIN=${DOMAIN:-ossftw.com}
+    networks:
+      - xmpp-net
+
+networks:
+  xmpp-net:
+    driver: bridge
+
+volumes:
+  xmpp-data:
+  xmpp-certs:

@@ -1,0 +1,51 @@
+# Cloudflare Tunnel Configuration for XMPP Server
+# This file goes on the server at: ~/.cloudflared/config.yml
+# 
+# Install cloudflared:
+#   curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+#   chmod +x /usr/local/bin/cloudflared
+#
+# Authenticate:
+#   cloudflared tunnel login
+#
+# Create tunnel:
+#   cloudflared tunnel create xmpp-ossftw
+#
+# Route DNS:
+#   cloudflared tunnel route dns xmpp-ossftw ossftw.com
+#   cloudflared tunnel route dns xmpp-ossftw *.ossftw.com
+#
+# Run:
+#   cloudflared tunnel --config config.yml run xmpp-ossftw
+
+tunnel: xmpp-ossftw
+credentials-file: /home/alan/.cloudflared/xmpp-ossftw.json
+
+ingress:
+  # XMPP C2S (Client-to-Server) - port 5222
+  - hostname: ossftw.com
+    service: tcp://localhost:5222
+  - hostname: "*.ossftw.com"
+    service: tcp://localhost:5222
+
+  # XMPP S2S (Server-to-Server / Federation) - port 5269
+  - hostname: ossftw.com
+    service: tcp://localhost:5269
+
+  # HTTP health check endpoint
+  - hostname: ossftw.com
+    path: /health
+    service: http://localhost:8080
+
+  # BOSH (HTTP long-polling for XMPP) if needed
+  - hostname: ossftw.com
+    path: /xmpp-httpbind
+    service: http://localhost:5280
+
+  # WebSocket support
+  - hostname: ossftw.com
+    path: /xmpp-websocket
+    service: ws://localhost:5280
+
+  # Default: 404
+  - service: http_status:404
