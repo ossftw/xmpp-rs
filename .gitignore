@@ -9,3 +9,4 @@ config/server.toml
 
 deploy.sh
 cloudflared/*.json
+/cloudflared/
